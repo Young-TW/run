@@ -1,3 +1,6 @@
+mod language;
+
 fn main() {
-    println!("Hello, world!");
+    let extension = "rs";
+    println!("The language for .{} files is {}", extension, language::specify_language(extension));
 }
