@@ -1,5 +1,6 @@
 mod compile;
 mod language;
+mod file_extension;
 
 fn main() {
     let extension = "rs";
