@@ -1,34 +1,64 @@
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
+/// Exit code returned when the required compiler / interpreter is not installed.
+/// Matches the shell convention for "command not found".
+pub const EXIT_RUNTIME_NOT_FOUND: i32 = 127;
+
+/// Exit code returned when the language itself is not supported by this tool.
+pub const EXIT_UNSUPPORTED: i32 = 2;
+
+/// Exit code returned when a compiled language fails to compile.
+pub const EXIT_COMPILE_FAILED: i32 = 1;
+
 /// Compile-and-run (for compiled languages) or invoke the matching runtime (for
 /// interpreted / managed languages) for a source file, returning the executed
 /// program's exit code.
 ///
 /// The runtime is chosen from the file `extension`, so e.g. `.sh` runs with
-/// `sh` while `.bash` runs with `bash`. Returns `1` when the language is
-/// unsupported or the program could not be launched.
+/// `sh` while `.bash` runs with `bash`. When no execution environment is
+/// available the function exits safely and consistently with
+/// [`EXIT_RUNTIME_NOT_FOUND`] rather than panicking.
 pub fn run(language: &str, extension: &str, file: &Path) -> i32 {
     match language {
-        "C" | "C++" | "Rust" => match crate::compile::compile_code(language, file) {
-            Some(executable) => {
-                let code = run_executable(&executable);
-                // The executable lives in a temp dir; remove it once it has run.
-                let _ = std::fs::remove_file(&executable);
-                code
-            }
-            None => {
-                eprintln!("Failed to compile {language} code.");
-                1
-            }
-        },
+        "C" | "C++" | "Rust" => run_compiled(language, file),
         _ => match runtimes(extension) {
-            Some(candidates) => run_with_runtime(language, extension, candidates, file),
+            Some(candidates) => run_with_runtime(language, candidates, file),
             None => {
                 eprintln!("{language} is not supported yet.");
-                1
+                EXIT_UNSUPPORTED
             }
         },
+    }
+}
+
+/// Compile a source file and run the resulting executable. Detects a missing
+/// compiler up front so it can report it consistently instead of mistaking it
+/// for a compilation error.
+fn run_compiled(language: &str, file: &Path) -> i32 {
+    let compiler = match crate::compile::compiler(language) {
+        Some(compiler) => compiler,
+        None => {
+            eprintln!("{language} is not supported yet.");
+            return EXIT_UNSUPPORTED;
+        }
+    };
+
+    if !is_available(compiler) {
+        return missing_runtime(language, &[compiler]);
+    }
+
+    match crate::compile::compile_code(language, file) {
+        Some(executable) => {
+            let code = run_executable(&executable);
+            // The executable lives in a temp dir; remove it once it has run.
+            let _ = std::fs::remove_file(&executable);
+            code
+        }
+        None => {
+            eprintln!("Failed to compile {language} code.");
+            EXIT_COMPILE_FAILED
+        }
     }
 }
 
@@ -50,27 +80,26 @@ fn runtimes(extension: &str) -> Option<&'static [&'static [&'static str]]> {
     }
 }
 
-/// Pick the first available runtime candidate and run the file with it.
-fn run_with_runtime(
-    language: &str,
-    extension: &str,
-    candidates: &[&[&str]],
-    file: &Path,
-) -> i32 {
+/// Pick the first available runtime candidate and run the file with it, or
+/// report a missing runtime consistently if none are installed.
+fn run_with_runtime(language: &str, candidates: &[&[&str]], file: &Path) -> i32 {
     for invocation in candidates {
         if is_available(invocation[0]) {
             return run_with(invocation, file);
         }
     }
+    let tools: Vec<&str> = candidates.iter().map(|c| c[0]).collect();
+    missing_runtime(language, &tools)
+}
+
+/// Report that no execution environment is installed for `language` and return
+/// a consistent exit code. `tools` lists the commands that were looked for.
+fn missing_runtime(language: &str, tools: &[&str]) -> i32 {
     eprintln!(
-        "No runtime found for {language} (.{extension}); tried: {}.",
-        candidates
-            .iter()
-            .map(|c| c[0])
-            .collect::<Vec<_>>()
-            .join(", ")
+        "No runtime found for {language}: please install {}.",
+        tools.join(" or ")
     );
-    1
+    EXIT_RUNTIME_NOT_FOUND
 }
 
 /// Run a previously compiled executable.
@@ -248,12 +277,36 @@ mod tests {
         let _ = std::fs::remove_file(&file);
     }
 
-    // ---- error handling ----------------------------------------------------
+    // ---- missing runtime / error handling ----------------------------------
+
+    #[test]
+    fn test_is_available_detects_present_and_missing() {
+        assert!(is_available("sh"));
+        assert!(!is_available("definitely-not-a-real-binary-zzzqx"));
+    }
+
+    #[test]
+    fn test_missing_runtime_exit_code() {
+        // Consistent, safe exit code when an execution environment is absent.
+        assert_eq!(
+            missing_runtime("Imaginary", &["nope", "alsonope"]),
+            EXIT_RUNTIME_NOT_FOUND
+        );
+    }
 
     #[test]
     fn test_unsupported_language_returns_error() {
         let file = write_temp("x.cs", "// c#\n");
-        assert_eq!(run("C#", "cs", &file), 1);
+        assert_eq!(run("C#", "cs", &file), EXIT_UNSUPPORTED);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_compiled_without_known_compiler_is_safe() {
+        // The compiled path must exit safely (no panic) for a language that has
+        // no known compiler, rather than trying to spawn a missing program.
+        let file = write_temp("x.txt", "");
+        assert_eq!(run_compiled("Nonexistent", &file), EXIT_UNSUPPORTED);
         let _ = std::fs::remove_file(&file);
     }
 }

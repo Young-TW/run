@@ -51,8 +51,8 @@ pub fn compile_code(language: &str, file: &Path) -> Option<PathBuf> {
 /// The compiler executable used for a given compiled language.
 ///
 /// Prefers the portable POSIX names (`cc`, `c++`) so the tool works whether
-/// the host provides GCC or Clang.
-fn compiler(language: &str) -> Option<&'static str> {
+/// the host provides GCC or Clang. Returns `None` for non-compiled languages.
+pub fn compiler(language: &str) -> Option<&'static str> {
     match language {
         "C++" => Some("c++"),
         "C" => Some("cc"),
