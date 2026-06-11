@@ -1,33 +1,63 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-pub fn compile_code(language: &str, file: &Path) {
-    // Only for compiled languages
+/// Compile a source file for a compiled language into a temporary executable.
+///
+/// Returns the path to the produced executable on success, or `None` if the
+/// language is not a compiled one or compilation failed. The temporary output
+/// lives in `/dev/shm` on Linux (no persistent disk access) and the system
+/// temp dir on macOS.
+pub fn compile_code(language: &str, file: &Path) -> Option<PathBuf> {
+    let output = gen_temp_path();
+
+    let mut command = Command::new(compiler(language)?);
     match language {
-        "Rust" => {
-            // Compilation logic for Rust
-        }
         "C++" => {
-            // Compilation logic for C++
-            let tmp_path = gen_temp_path();
-
-            // Use clang++ to compile and run (in-memory compilation, no disk access)
-            let status = std::process::Command::new("clang++")
+            command
                 .arg("-x")
                 .arg("c++")
                 .arg(file)
                 .arg("-o")
-                .arg(&tmp_path)
+                .arg(&output)
                 .arg("-pipe")
-                .arg("-std=c++20")
-                .status()
-                .expect("Failed to compile C++ code");
+                .arg("-std=c++20");
         }
         "C" => {
-            // Compilation logic for C
+            command
+                .arg("-x")
+                .arg("c")
+                .arg(file)
+                .arg("-o")
+                .arg(&output)
+                .arg("-pipe")
+                .arg("-std=c17");
         }
-        _ => {
-            println!("{} is not a compiled language.", language);
+        "Rust" => {
+            command.arg(file).arg("-o").arg(&output);
         }
+        _ => return None,
+    }
+
+    let status = command.status().ok()?;
+    if status.success() {
+        Some(output)
+    } else {
+        // Remove the empty placeholder file left behind on a failed build.
+        let _ = std::fs::remove_file(&output);
+        None
+    }
+}
+
+/// The compiler executable used for a given compiled language.
+///
+/// Prefers the portable POSIX names (`cc`, `c++`) so the tool works whether
+/// the host provides GCC or Clang.
+fn compiler(language: &str) -> Option<&'static str> {
+    match language {
+        "C++" => Some("c++"),
+        "C" => Some("cc"),
+        "Rust" => Some("rustc"),
+        _ => None,
     }
 }
 
@@ -79,5 +109,12 @@ mod tests {
         assert_ne!(first, second);
         let _ = std::fs::remove_file(&first);
         let _ = std::fs::remove_file(&second);
+    }
+
+    #[test]
+    fn test_compile_code_rejects_non_compiled_language() {
+        // Shell / Python / Unknown are not compiled languages.
+        assert!(compile_code("Shell", Path::new("foo.sh")).is_none());
+        assert!(compile_code("Python", Path::new("foo.py")).is_none());
     }
 }

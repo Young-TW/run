@@ -1,5 +1,3 @@
-use std::path::Path;
-
 pub fn parse_extension(file_path: &str) -> Option<&str> {
     std::path::Path::new(file_path)
         .extension()

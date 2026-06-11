@@ -9,6 +9,7 @@ pub fn specify_language(extension: &str) -> &'static str {
         "rb" => "Ruby",
         "go" => "Go",
         "ts" => "TypeScript",
+        "sh" | "bash" => "Shell",
         _ => "Unknown",
     }
 }
@@ -34,6 +35,12 @@ mod tests {
         assert_eq!(specify_language("cpp"), "C++");
         assert_eq!(specify_language("cc"), "C++");
         assert_eq!(specify_language("cxx"), "C++");
+    }
+
+    #[test]
+    fn test_shell_aliases() {
+        assert_eq!(specify_language("sh"), "Shell");
+        assert_eq!(specify_language("bash"), "Shell");
     }
 
     #[test]
