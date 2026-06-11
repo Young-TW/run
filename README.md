@@ -17,11 +17,18 @@ propagated.
 
 - [x] C++
 - [x] C
-- [ ] Python
+- [x] Python
 - [x] Rust
 - [ ] Zig
-- [ ] C#
-- [ ] Go
-- [ ] Java
-- [ ] TypeScript
+- [ ] C# (needs the `dotnet` runtime)
+- [x] Go
+- [x] Java
+- [x] JavaScript
+- [x] Ruby
+- [x] TypeScript
 - [x] Shell (sh / bash)
+
+The runtime is selected from the file extension, so `.sh` runs with `sh`,
+`.bash` with `bash`, `.ts` with the first available of `bun` / `tsx` /
+`ts-node`, and so on. Interpreted languages fall back through a list of
+candidate runtimes when the preferred one is not installed.

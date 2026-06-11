@@ -27,6 +27,6 @@ fn main() {
     };
 
     let language = language::specify_language(extension);
-    let code = runner::run(language, std::path::Path::new(file_path));
+    let code = runner::run(language, extension, std::path::Path::new(file_path));
     std::process::exit(code);
 }
