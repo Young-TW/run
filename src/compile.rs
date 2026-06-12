@@ -1,60 +1,93 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-pub fn compile_code(language: &str, file: &Path) {
-    // Only for compiled languages
+/// Compile a source file for a compiled language into a temporary executable.
+///
+/// Returns the path to the produced executable on success, or `None` if the
+/// language is not a compiled one or compilation failed. The temporary output
+/// lives in `/dev/shm` on Linux (no persistent disk access) and the system
+/// temp dir on macOS.
+pub fn compile_code(language: &str, file: &Path) -> Option<PathBuf> {
+    let output = gen_temp_path();
+
+    let mut command = Command::new(compiler(language)?);
     match language {
-        "Rust" => {
-            // Compilation logic for Rust
-        }
         "C++" => {
-            // Compilation logic for C++
-            let tmp_path = gen_temp_path();
-
-            // Use clang++ to compile and run (in-memory compilation, no disk access)
-            let status = std::process::Command::new("clang++")
+            command
                 .arg("-x")
                 .arg("c++")
                 .arg(file)
                 .arg("-o")
-                .arg(&tmp_path)
+                .arg(&output)
                 .arg("-pipe")
-                .arg("-std=c++20")
-                .status()
-                .expect("Failed to compile C++ code");
+                .arg("-std=c++20");
         }
         "C" => {
-            // Compilation logic for C
+            command
+                .arg("-x")
+                .arg("c")
+                .arg(file)
+                .arg("-o")
+                .arg(&output)
+                .arg("-pipe")
+                .arg("-std=c17");
         }
-        _ => {
-            println!("{} is not a compiled language.", language);
+        "Rust" => {
+            command.arg(file).arg("-o").arg(&output);
         }
+        _ => return None,
+    }
+
+    let status = command.status().ok()?;
+    if status.success() {
+        Some(output)
+    } else {
+        // Remove the empty placeholder file left behind on a failed build.
+        let _ = std::fs::remove_file(&output);
+        None
+    }
+}
+
+/// The compiler executable used for a given compiled language.
+///
+/// Prefers the portable POSIX names (`cc`, `c++`) so the tool works whether
+/// the host provides GCC or Clang. Returns `None` for non-compiled languages.
+pub fn compiler(language: &str) -> Option<&'static str> {
+    match language {
+        "C++" => Some("c++"),
+        "C" => Some("cc"),
+        "Rust" => Some("rustc"),
+        _ => None,
     }
 }
 
 pub fn gen_temp_path() -> std::path::PathBuf {
     // If system is macOS, mktemp -t tmp_cpp_exec
     // If system is Linux, /dev/shm/tmp_cpp_exec
-    if cfg!(target_os = "macos") {
-        // use PID + time to generate a unique filename
-        let mut tmp = std::env::temp_dir();
-        let name = format!(
-            "tmp_exec_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        tmp.push(name);
-        // try to create the file
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(&tmp);
-        tmp
+    // Choose the base directory: /dev/shm on Linux, the system temp dir on macOS.
+    let mut tmp = if cfg!(target_os = "macos") {
+        std::env::temp_dir()
     } else {
-        std::path::PathBuf::from("/dev/shm/tmp_exec")
-    }
+        std::path::PathBuf::from("/dev/shm")
+    };
+
+    // Use PID + time to generate a unique filename so concurrent runs don't clash.
+    let name = format!(
+        "tmp_exec_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    tmp.push(name);
+
+    // Create the file so the path is guaranteed to exist on every platform.
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&tmp);
+    tmp
 }
 
 #[cfg(test)]
@@ -62,8 +95,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gen_temp_path() {
+    fn test_gen_temp_path_creates_file() {
         let temp_path = gen_temp_path();
         assert!(temp_path.exists());
+        // Clean up so repeated test runs don't leave files behind.
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[test]
+    fn test_gen_temp_path_is_unique() {
+        let first = gen_temp_path();
+        let second = gen_temp_path();
+        assert_ne!(first, second);
+        let _ = std::fs::remove_file(&first);
+        let _ = std::fs::remove_file(&second);
+    }
+
+    #[test]
+    fn test_compile_code_rejects_non_compiled_language() {
+        // Shell / Python / Unknown are not compiled languages.
+        assert!(compile_code("Shell", Path::new("foo.sh")).is_none());
+        assert!(compile_code("Python", Path::new("foo.py")).is_none());
     }
 }
