@@ -149,9 +149,39 @@ fn run_with(invocation: &[&str], needs_separator: bool, file: &Path, args: &[Str
     command.args(args).status().map(exit_code).unwrap_or(1)
 }
 
-/// Whether a command exists and can be launched on this host.
+/// Whether a command exists and can be launched on this host, resolved by
+/// searching PATH rather than spawning the command.
 fn is_available(cmd: &str) -> bool {
-    Command::new(cmd).arg("--version").output().is_ok()
+    if cmd.contains(['/', '\\']) {
+        return is_executable(Path::new(cmd));
+    }
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| is_executable(&dir.join(cmd)))
+    })
+}
+
+/// Whether `path` points to an executable file.
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Windows has no executable bit; probe for `cmd.<ext>` using PATHEXT instead,
+/// since PATH entries list commands without their extension (e.g. `dotnet`
+/// actually lives on disk as `dotnet.EXE`).
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    if path.extension().is_some() {
+        return path.is_file();
+    }
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|ext| !ext.is_empty())
+        .any(|ext| path.with_extension(ext.trim_start_matches('.')).is_file())
 }
 
 /// Extract a numeric exit code, defaulting to `1` when the process was
