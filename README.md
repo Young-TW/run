@@ -19,18 +19,28 @@ propagated.
 - [x] C
 - [x] Python
 - [x] Rust
-- [ ] Zig
-- [ ] C# (needs the `dotnet` runtime)
+- [x] Zig
+- [x] C# (needs the .NET 10+ SDK, or the `dotnet-script` global tool)
 - [x] Go
 - [x] Java
 - [x] JavaScript
 - [x] Ruby
 - [x] TypeScript
 - [x] Shell (sh / bash)
+- [x] PHP
+- [x] Lua
+- [x] Perl
+- [x] R
+- [x] Haskell
+- [x] Swift
+- [x] Dart
+- [x] Elixir
 
 The runtime is selected from the file extension, so `.sh` runs with `sh`,
 `.bash` with `bash`, `.ts` with the first available of `bun` / `tsx` /
-`ts-node`, and so on. Interpreted languages fall back through a list of
+`ts-node`, `.zig` with `zig run`, and `.cs` with `dotnet-script` or the
+`dotnet run` file-based program support (requires a .NET 10+ SDK),
+and so on. Interpreted languages fall back through a list of
 candidate runtimes when the preferred one is not installed.
 
 ## Exit Codes
