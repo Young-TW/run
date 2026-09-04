@@ -14,9 +14,21 @@ fn main() {
                 .required(true)
                 .index(1),
         )
+        .arg(
+            Arg::new("args")
+                .help("Arguments passed to the executed program (place them after --)")
+                .num_args(0..)
+                .last(true)
+                .index(2),
+        )
         .get_matches();
 
     let file_path = matches.get_one::<String>("file").expect("file is required");
+
+    let args: Vec<String> = matches
+        .get_many::<String>("args")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
 
     let extension = match file_extension::parse_extension(file_path) {
         Some(ext) => ext,
@@ -27,6 +39,6 @@ fn main() {
     };
 
     let language = language::specify_language(extension);
-    let code = runner::run(language, extension, std::path::Path::new(file_path));
+    let code = runner::run(language, extension, std::path::Path::new(file_path), &args);
     std::process::exit(code);
 }

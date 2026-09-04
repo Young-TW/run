@@ -13,17 +13,17 @@ pub const EXIT_COMPILE_FAILED: i32 = 1;
 
 /// Compile-and-run (for compiled languages) or invoke the matching runtime (for
 /// interpreted / managed languages) for a source file, returning the executed
-/// program's exit code.
+/// program's exit code. `args` are forwarded to the executed program.
 ///
 /// The runtime is chosen from the file `extension`, so e.g. `.sh` runs with
 /// `sh` while `.bash` runs with `bash`. When no execution environment is
 /// available the function exits safely and consistently with
 /// [`EXIT_RUNTIME_NOT_FOUND`] rather than panicking.
-pub fn run(language: &str, extension: &str, file: &Path) -> i32 {
+pub fn run(language: &str, extension: &str, file: &Path, args: &[String]) -> i32 {
     match language {
-        "C" | "C++" | "Rust" => run_compiled(language, file),
+        "C" | "C++" | "Rust" => run_compiled(language, file, args),
         _ => match runtimes(extension) {
-            Some(candidates) => run_with_runtime(language, candidates, file),
+            Some(candidates) => run_with_runtime(language, candidates, file, args),
             None => {
                 eprintln!("{language} is not supported yet.");
                 EXIT_UNSUPPORTED
@@ -35,7 +35,7 @@ pub fn run(language: &str, extension: &str, file: &Path) -> i32 {
 /// Compile a source file and run the resulting executable. Detects a missing
 /// compiler up front so it can report it consistently instead of mistaking it
 /// for a compilation error.
-fn run_compiled(language: &str, file: &Path) -> i32 {
+fn run_compiled(language: &str, file: &Path, args: &[String]) -> i32 {
     let compiler = match crate::compile::compiler(language) {
         Some(compiler) => compiler,
         None => {
@@ -50,7 +50,7 @@ fn run_compiled(language: &str, file: &Path) -> i32 {
 
     match crate::compile::compile_code(language, file) {
         Some(executable) => {
-            let code = run_executable(&executable);
+            let code = run_executable(&executable, args);
             // The executable lives in a temp dir; remove it once it has run.
             let _ = std::fs::remove_file(&executable);
             code
@@ -63,42 +63,56 @@ fn run_compiled(language: &str, file: &Path) -> i32 {
 }
 
 /// Candidate runtime invocations for an interpreted / managed language, keyed by
-/// file extension. Each candidate is the program name followed by any leading
-/// arguments (the source file is appended afterwards). The first candidate whose
-/// program is installed is used, allowing graceful fallbacks.
-fn runtimes(extension: &str) -> Option<&'static [&'static [&'static str]]> {
+/// file extension. Each candidate is `(invocation, needs_separator)` where
+/// `invocation` is the program name followed by any leading arguments (the
+/// source file is appended afterwards) and `needs_separator` tells whether
+/// user-supplied program arguments must be placed after a `--` separator —
+/// e.g. `zig run file.zig -- args` and `dotnet run file.cs -- args` require it,
+/// while `python3 file.py args` does not. The first candidate whose program is
+/// installed is used, allowing graceful fallbacks.
+fn runtimes(extension: &str) -> Option<&'static [(&'static [&'static str], bool)]> {
     match extension {
-        "sh" => Some(&[&["sh"]]),
-        "bash" => Some(&[&["bash"]]),
-        "py" => Some(&[&["python3"], &["python"]]),
-        "js" => Some(&[&["node"]]),
-        "ts" => Some(&[&["bun"], &["tsx"], &["ts-node"], &["deno", "run"]]),
-        "rb" => Some(&[&["ruby"]]),
-        "go" => Some(&[&["go", "run"]]),
-        "java" => Some(&[&["java"]]),
-        "zig" => Some(&[&["zig", "run"]]),
-        "cs" => Some(&[&["dotnet-script"], &["dotnet", "run"]]),
-        "php" => Some(&[&["php"]]),
-        "lua" => Some(&[&["lua"], &["luajit"]]),
-        "pl" => Some(&[&["perl"]]),
-        "r" => Some(&[&["Rscript"]]),
-        "hs" => Some(&[&["runghc"], &["runhaskell"]]),
-        "swift" => Some(&[&["swift"]]),
-        "dart" => Some(&[&["dart"]]),
-        "ex" | "exs" => Some(&[&["elixir"]]),
+        "sh" => Some(&[(&["sh"], false)]),
+        "bash" => Some(&[(&["bash"], false)]),
+        "py" => Some(&[(&["python3"], false), (&["python"], false)]),
+        "js" => Some(&[(&["node"], false)]),
+        "ts" => Some(&[
+            (&["bun"], false),
+            (&["tsx"], false),
+            (&["ts-node"], false),
+            (&["deno", "run"], false),
+        ]),
+        "rb" => Some(&[(&["ruby"], false)]),
+        "go" => Some(&[(&["go", "run"], false)]),
+        "java" => Some(&[(&["java"], false)]),
+        "zig" => Some(&[(&["zig", "run"], true)]),
+        "cs" => Some(&[(&["dotnet-script"], true), (&["dotnet", "run"], true)]),
+        "php" => Some(&[(&["php"], false)]),
+        "lua" => Some(&[(&["lua"], false), (&["luajit"], false)]),
+        "pl" => Some(&[(&["perl"], false)]),
+        "r" => Some(&[(&["Rscript"], false)]),
+        "hs" => Some(&[(&["runghc"], false), (&["runhaskell"], false)]),
+        "swift" => Some(&[(&["swift"], false)]),
+        "dart" => Some(&[(&["dart"], false)]),
+        "ex" | "exs" => Some(&[(&["elixir"], false)]),
         _ => None,
     }
 }
 
 /// Pick the first available runtime candidate and run the file with it, or
 /// report a missing runtime consistently if none are installed.
-fn run_with_runtime(language: &str, candidates: &[&[&str]], file: &Path) -> i32 {
-    for invocation in candidates {
+fn run_with_runtime(
+    language: &str,
+    candidates: &[(&[&str], bool)],
+    file: &Path,
+    args: &[String],
+) -> i32 {
+    for (invocation, needs_separator) in candidates {
         if is_available(invocation[0]) {
-            return run_with(invocation, file);
+            return run_with(invocation, *needs_separator, file, args);
         }
     }
-    let tools: Vec<&str> = candidates.iter().map(|c| c[0]).collect();
+    let tools: Vec<&str> = candidates.iter().map(|c| c.0[0]).collect();
     missing_runtime(language, &tools)
 }
 
@@ -113,19 +127,26 @@ fn missing_runtime(language: &str, tools: &[&str]) -> i32 {
 }
 
 /// Run a previously compiled executable.
-fn run_executable(path: &Path) -> i32 {
-    Command::new(path).status().map(exit_code).unwrap_or(1)
-}
-
-/// Run a source file through a runtime invocation, e.g. `["go", "run"]` becomes
-/// `go run <file>`.
-fn run_with(invocation: &[&str], file: &Path) -> i32 {
-    Command::new(invocation[0])
-        .args(&invocation[1..])
-        .arg(file)
+fn run_executable(path: &Path, args: &[String]) -> i32 {
+    Command::new(path)
+        .args(args)
         .status()
         .map(exit_code)
         .unwrap_or(1)
+}
+
+/// Run a source file through a runtime invocation, e.g. `["go", "run"]` becomes
+/// `go run <file>`. When `needs_separator` is set and the user supplied
+/// arguments, a `--` is inserted between the file and the user arguments —
+/// required by runtimes like `zig run` and `dotnet run` that would otherwise
+/// mistake the program arguments for their own.
+fn run_with(invocation: &[&str], needs_separator: bool, file: &Path, args: &[String]) -> i32 {
+    let mut command = Command::new(invocation[0]);
+    command.args(&invocation[1..]).arg(file);
+    if needs_separator && !args.is_empty() {
+        command.arg("--");
+    }
+    command.args(args).status().map(exit_code).unwrap_or(1)
 }
 
 /// Whether a command exists and can be launched on this host.
@@ -160,7 +181,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.c", "int main(void) { return 0; }\n");
-        assert_eq!(run("C", "c", &file), 0);
+        assert_eq!(run("C", "c", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -170,7 +191,7 @@ mod tests {
             return;
         }
         let file = write_temp("ret.c", "int main(void) { return 7; }\n");
-        assert_eq!(run("C", "c", &file), 7);
+        assert_eq!(run("C", "c", &file, &[]), 7);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -180,7 +201,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.cpp", "int main() { return 0; }\n");
-        assert_eq!(run("C++", "cpp", &file), 0);
+        assert_eq!(run("C++", "cpp", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -190,7 +211,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.rs", "fn main() { std::process::exit(0); }\n");
-        assert_eq!(run("Rust", "rs", &file), 0);
+        assert_eq!(run("Rust", "rs", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -199,7 +220,7 @@ mod tests {
     #[test]
     fn test_run_sh() {
         let file = write_temp("ok.sh", "exit 0\n");
-        assert_eq!(run("Shell", "sh", &file), 0);
+        assert_eq!(run("Shell", "sh", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -211,14 +232,21 @@ mod tests {
         // `[[ ... ]]` is a bashism that plain `sh`/dash would reject, proving the
         // .bash extension selected the bash runtime rather than sh.
         let file = write_temp("b.bash", "if [[ 1 == 1 ]]; then exit 0; else exit 1; fi\n");
-        assert_eq!(run("Shell", "bash", &file), 0);
+        assert_eq!(run("Shell", "bash", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
     #[test]
     fn test_run_shell_propagates_exit_code() {
         let file = write_temp("fail.sh", "exit 3\n");
-        assert_eq!(run("Shell", "sh", &file), 3);
+        assert_eq!(run("Shell", "sh", &file, &[]), 3);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_forwards_program_args() {
+        let file = write_temp("args.sh", "exit \"$1\"\n");
+        assert_eq!(run("Shell", "sh", &file, &["4".to_string()]), 4);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -230,7 +258,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.py", "import sys\nsys.exit(0)\n");
-        assert_eq!(run("Python", "py", &file), 0);
+        assert_eq!(run("Python", "py", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -240,7 +268,7 @@ mod tests {
             return;
         }
         let file = write_temp("ret.py", "import sys\nsys.exit(5)\n");
-        assert_eq!(run("Python", "py", &file), 5);
+        assert_eq!(run("Python", "py", &file, &[]), 5);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -250,7 +278,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.js", "process.exit(0)\n");
-        assert_eq!(run("JavaScript", "js", &file), 0);
+        assert_eq!(run("JavaScript", "js", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -260,7 +288,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.rb", "exit 0\n");
-        assert_eq!(run("Ruby", "rb", &file), 0);
+        assert_eq!(run("Ruby", "rb", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -270,7 +298,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.go", "package main\nfunc main() {}\n");
-        assert_eq!(run("Go", "go", &file), 0);
+        assert_eq!(run("Go", "go", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -283,7 +311,7 @@ mod tests {
             "prog.java",
             "class Main { public static void main(String[] a) {} }\n",
         );
-        assert_eq!(run("Java", "java", &file), 0);
+        assert_eq!(run("Java", "java", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -293,7 +321,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.zig", "pub fn main() void {}\n");
-        assert_eq!(run("Zig", "zig", &file), 0);
+        assert_eq!(run("Zig", "zig", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -306,7 +334,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.cs", "System.Console.WriteLine();\n");
-        assert_eq!(run("C#", "cs", &file), 0);
+        assert_eq!(run("C#", "cs", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -334,7 +362,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.php", "<?php exit(0);\n");
-        assert_eq!(run("PHP", "php", &file), 0);
+        assert_eq!(run("PHP", "php", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -344,7 +372,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.lua", "os.exit(0)\n");
-        assert_eq!(run("Lua", "lua", &file), 0);
+        assert_eq!(run("Lua", "lua", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -354,7 +382,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.pl", "exit 0;\n");
-        assert_eq!(run("Perl", "pl", &file), 0);
+        assert_eq!(run("Perl", "pl", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -364,7 +392,7 @@ mod tests {
             return;
         }
         let file = write_temp("ret.pl", "exit 4;\n");
-        assert_eq!(run("Perl", "pl", &file), 4);
+        assert_eq!(run("Perl", "pl", &file, &[]), 4);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -374,7 +402,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.r", "quit(save = \"no\", status = 0)\n");
-        assert_eq!(run("R", "r", &file), 0);
+        assert_eq!(run("R", "r", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -384,7 +412,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.hs", "main = return ()\n");
-        assert_eq!(run("Haskell", "hs", &file), 0);
+        assert_eq!(run("Haskell", "hs", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -394,7 +422,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.swift", "// top-level script\n");
-        assert_eq!(run("Swift", "swift", &file), 0);
+        assert_eq!(run("Swift", "swift", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -404,7 +432,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.dart", "void main() {}\n");
-        assert_eq!(run("Dart", "dart", &file), 0);
+        assert_eq!(run("Dart", "dart", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -414,7 +442,7 @@ mod tests {
             return;
         }
         let file = write_temp("prog.ex", ":ok\n");
-        assert_eq!(run("Elixir", "ex", &file), 0);
+        assert_eq!(run("Elixir", "ex", &file, &[]), 0);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -438,7 +466,7 @@ mod tests {
     #[test]
     fn test_unsupported_language_returns_error() {
         let file = write_temp("x.kt", "// kotlin\n");
-        assert_eq!(run("Kotlin", "kt", &file), EXIT_UNSUPPORTED);
+        assert_eq!(run("Kotlin", "kt", &file, &[]), EXIT_UNSUPPORTED);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -447,7 +475,7 @@ mod tests {
         // The compiled path must exit safely (no panic) for a language that has
         // no known compiler, rather than trying to spawn a missing program.
         let file = write_temp("x.txt", "");
-        assert_eq!(run_compiled("Nonexistent", &file), EXIT_UNSUPPORTED);
+        assert_eq!(run_compiled("Nonexistent", &file, &[]), EXIT_UNSUPPORTED);
         let _ = std::fs::remove_file(&file);
     }
 }
