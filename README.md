@@ -5,13 +5,22 @@ Compile/Interpret and Execute any language code snippets quickly without creatin
 ## Usage
 
 ```sh
-run <source-file>
+run <source-file> [-- <program-args>...]
 ```
 
 The language is detected from the file extension, then the snippet is
 compiled (into `/dev/shm` on Linux, no persistent disk access) and executed,
 or interpreted directly for scripting languages. The program's exit code is
 propagated.
+
+Everything after `--` is forwarded to the executed program, e.g.
+`run solution.py -- input.txt --verbose`. For runtimes that separate their
+own options from program arguments (`zig run`, `dotnet run`), the `--` is
+inserted automatically.
+
+`run` itself never writes build artifacts to disk; note however that some
+runtimes (Go, Zig, Dart, ...) keep their own on-disk build caches when
+invoked.
 
 ## Supported Languages
 
@@ -42,6 +51,12 @@ The runtime is selected from the file extension, so `.sh` runs with `sh`,
 `dotnet run` file-based program support (requires a .NET 10+ SDK),
 and so on. Interpreted languages fall back through a list of
 candidate runtimes when the preferred one is not installed.
+
+## Supported Platforms
+
+Linux and macOS are the primary targets. On Windows the interpreted languages
+work as-is; the compiled path needs `rustc` or a GCC-compatible `cc`/`c++`
+(e.g. MinGW) — MSVC `cl` is not supported.
 
 ## Exit Codes
 
