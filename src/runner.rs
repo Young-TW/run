@@ -76,6 +76,16 @@ fn runtimes(extension: &str) -> Option<&'static [&'static [&'static str]]> {
         "rb" => Some(&[&["ruby"]]),
         "go" => Some(&[&["go", "run"]]),
         "java" => Some(&[&["java"]]),
+        "zig" => Some(&[&["zig", "run"]]),
+        "cs" => Some(&[&["dotnet-script"], &["dotnet", "run"]]),
+        "php" => Some(&[&["php"]]),
+        "lua" => Some(&[&["lua"], &["luajit"]]),
+        "pl" => Some(&[&["perl"]]),
+        "r" => Some(&[&["Rscript"]]),
+        "hs" => Some(&[&["runghc"], &["runhaskell"]]),
+        "swift" => Some(&[&["swift"]]),
+        "dart" => Some(&[&["dart"]]),
+        "ex" | "exs" => Some(&[&["elixir"]]),
         _ => None,
     }
 }
@@ -277,6 +287,137 @@ mod tests {
         let _ = std::fs::remove_file(&file);
     }
 
+    #[test]
+    fn test_run_zig() {
+        if !is_available("zig") {
+            return;
+        }
+        let file = write_temp("prog.zig", "pub fn main() void {}\n");
+        assert_eq!(run("Zig", "zig", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_csharp() {
+        // The first candidate is dotnet-script; `dotnet run` on a loose .cs
+        // file requires a .NET 10+ SDK (file-based programs), so the plain
+        // presence check used for other runtimes is not sufficient here.
+        if !is_available("dotnet-script") && !dotnet_supports_file_based_programs() {
+            return;
+        }
+        let file = write_temp("prog.cs", "System.Console.WriteLine();\n");
+        assert_eq!(run("C#", "cs", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// Whether an installed dotnet SDK is new enough (>= 10) to run a loose
+    /// .cs file via `dotnet run`. Test-only; the runner itself keeps the
+    /// simple "first available candidate wins" model.
+    fn dotnet_supports_file_based_programs() -> bool {
+        let Ok(output) = Command::new("dotnet").arg("--version").output() else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major >= 10)
+    }
+
+    #[test]
+    fn test_run_php() {
+        if !is_available("php") {
+            return;
+        }
+        let file = write_temp("prog.php", "<?php exit(0);\n");
+        assert_eq!(run("PHP", "php", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_lua() {
+        if !is_available("lua") {
+            return;
+        }
+        let file = write_temp("prog.lua", "os.exit(0)\n");
+        assert_eq!(run("Lua", "lua", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_perl() {
+        if !is_available("perl") {
+            return;
+        }
+        let file = write_temp("prog.pl", "exit 0;\n");
+        assert_eq!(run("Perl", "pl", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_perl_propagates_exit_code() {
+        if !is_available("perl") {
+            return;
+        }
+        let file = write_temp("ret.pl", "exit 4;\n");
+        assert_eq!(run("Perl", "pl", &file), 4);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_r() {
+        if !is_available("Rscript") {
+            return;
+        }
+        let file = write_temp("prog.r", "quit(save = \"no\", status = 0)\n");
+        assert_eq!(run("R", "r", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_haskell() {
+        if !is_available("runghc") {
+            return;
+        }
+        let file = write_temp("prog.hs", "main = return ()\n");
+        assert_eq!(run("Haskell", "hs", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_swift() {
+        if !is_available("swift") {
+            return;
+        }
+        let file = write_temp("prog.swift", "// top-level script\n");
+        assert_eq!(run("Swift", "swift", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_dart() {
+        if !is_available("dart") {
+            return;
+        }
+        let file = write_temp("prog.dart", "void main() {}\n");
+        assert_eq!(run("Dart", "dart", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_run_elixir() {
+        if !is_available("elixir") {
+            return;
+        }
+        let file = write_temp("prog.ex", ":ok\n");
+        assert_eq!(run("Elixir", "ex", &file), 0);
+        let _ = std::fs::remove_file(&file);
+    }
+
     // ---- missing runtime / error handling ----------------------------------
 
     #[test]
@@ -296,8 +437,8 @@ mod tests {
 
     #[test]
     fn test_unsupported_language_returns_error() {
-        let file = write_temp("x.cs", "// c#\n");
-        assert_eq!(run("C#", "cs", &file), EXIT_UNSUPPORTED);
+        let file = write_temp("x.kt", "// kotlin\n");
+        assert_eq!(run("Kotlin", "kt", &file), EXIT_UNSUPPORTED);
         let _ = std::fs::remove_file(&file);
     }
 
