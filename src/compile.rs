@@ -62,17 +62,17 @@ pub fn compiler(language: &str) -> Option<&'static str> {
 }
 
 pub fn gen_temp_path() -> std::path::PathBuf {
-    // If system is macOS, mktemp -t tmp_cpp_exec
-    // If system is Linux, /dev/shm/tmp_cpp_exec
-    // Choose the base directory: /dev/shm on Linux, the system temp dir on macOS.
-    let mut tmp = if cfg!(target_os = "macos") {
-        std::env::temp_dir()
-    } else {
+    // Choose the base directory: on Linux the executable lives in memory-backed
+    // /dev/shm (no persistent disk access); everywhere else (macOS, Windows,
+    // other Unixes) fall back to the system temp dir.
+    let mut tmp = if cfg!(target_os = "linux") {
         std::path::PathBuf::from("/dev/shm")
+    } else {
+        std::env::temp_dir()
     };
 
     // Use PID + time to generate a unique filename so concurrent runs don't clash.
-    let name = format!(
+    let mut name = format!(
         "tmp_exec_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -80,6 +80,10 @@ pub fn gen_temp_path() -> std::path::PathBuf {
             .unwrap()
             .as_nanos()
     );
+    // Windows executables must carry the .exe extension to be launchable.
+    if cfg!(windows) {
+        name.push_str(".exe");
+    }
     tmp.push(name);
 
     // Create the file so the path is guaranteed to exist on every platform.
