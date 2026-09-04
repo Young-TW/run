@@ -10,6 +10,16 @@ pub fn specify_language(extension: &str) -> &'static str {
         "go" => "Go",
         "ts" => "TypeScript",
         "sh" | "bash" => "Shell",
+        "zig" => "Zig",
+        "cs" => "C#",
+        "php" => "PHP",
+        "lua" => "Lua",
+        "pl" => "Perl",
+        "r" => "R",
+        "hs" => "Haskell",
+        "swift" => "Swift",
+        "dart" => "Dart",
+        "ex" | "exs" => "Elixir",
         _ => "Unknown",
     }
 }
@@ -28,6 +38,16 @@ mod tests {
         assert_eq!(specify_language("rb"), "Ruby");
         assert_eq!(specify_language("go"), "Go");
         assert_eq!(specify_language("ts"), "TypeScript");
+        assert_eq!(specify_language("zig"), "Zig");
+        assert_eq!(specify_language("cs"), "C#");
+        assert_eq!(specify_language("php"), "PHP");
+        assert_eq!(specify_language("lua"), "Lua");
+        assert_eq!(specify_language("pl"), "Perl");
+        assert_eq!(specify_language("r"), "R");
+        assert_eq!(specify_language("hs"), "Haskell");
+        assert_eq!(specify_language("swift"), "Swift");
+        assert_eq!(specify_language("dart"), "Dart");
+        assert_eq!(specify_language("ex"), "Elixir");
     }
 
     #[test]
@@ -44,6 +64,12 @@ mod tests {
     }
 
     #[test]
+    fn test_elixir_aliases() {
+        assert_eq!(specify_language("ex"), "Elixir");
+        assert_eq!(specify_language("exs"), "Elixir");
+    }
+
+    #[test]
     fn test_unknown_extension() {
         assert_eq!(specify_language("txt"), "Unknown");
         assert_eq!(specify_language(""), "Unknown");
@@ -53,7 +79,9 @@ mod tests {
     #[test]
     fn test_case_sensitive() {
         // Extensions are matched case-sensitively; upper-case is not recognised.
+        // Notably the conventional upper-case `.R` extension is not supported.
         assert_eq!(specify_language("RS"), "Unknown");
         assert_eq!(specify_language("CPP"), "Unknown");
+        assert_eq!(specify_language("R"), "Unknown");
     }
 }
